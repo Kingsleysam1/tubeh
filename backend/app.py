@@ -61,10 +61,30 @@ def create_app() -> Flask:
     # ── Health Check ──────────────────────────────────────────────
     @app.route("/api/health", methods=["GET"])
     def health():
+        import subprocess as _sp
+        from utils.cookies import cookie_manager
+
+        # Get yt-dlp version
+        ytdlp_version = "unknown"
+        try:
+            ver = _sp.run(
+                ["yt-dlp", "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if ver.returncode == 0:
+                ytdlp_version = ver.stdout.strip()
+        except Exception:
+            pass
+
+        cookie_status = cookie_manager.get_status()
+
         return jsonify({
             "status": "ok",
             "service": "tubeheist-backend",
             "version": "1.0.0",
+            "ytdlp_version": ytdlp_version,
+            "cookies_loaded": cookie_status["cookies_loaded"],
+            "cookie_source": cookie_status["cookie_source"],
         })
 
     # ── Global Error Handlers ─────────────────────────────────────

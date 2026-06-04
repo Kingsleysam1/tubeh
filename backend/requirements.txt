@@ -3,4 +3,5 @@ flask-cors==5.0.1
 flask-limiter==3.12
 gunicorn==23.0.0
 python-dotenv==1.1.0
-yt-dlp>=2025.3.31
+requests>=2.31.0
+yt-dlp>=2025.1.1

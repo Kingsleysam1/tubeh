@@ -91,6 +91,7 @@ def download():
             quality=quality,
             is_audio_only=is_audio_only,
             audio_format=audio_format,
+            enable_quality_fallback=True,
         )
 
         # Register file for serving
@@ -108,9 +109,16 @@ def download():
     except ValueError as e:
         error_msg = str(e)
         logger.warning(f"Download failed for {url}: {error_msg}")
+
+        # Provide a retry hint for bot-detection failures
+        retry_hint = None
+        if "blocked" in error_msg.lower() or "bot" in error_msg.lower() or "exhausted" in error_msg.lower():
+            retry_hint = "YouTube is rate-limiting this server. Try again in a few minutes."
+
         return jsonify({
             "status": "error",
             "error": error_msg,
+            **({"retry_hint": retry_hint} if retry_hint else {}),
         }), 400
 
     except RuntimeError as e:

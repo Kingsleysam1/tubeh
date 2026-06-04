@@ -8,3 +8,7 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      - key: YOUTUBE_COOKIES
+        sync: false  # Set in Render dashboard — paste Netscape cookies.txt content
+      - key: PROXY_URL
+        sync: false  # Optional — set to HTTP/SOCKS5 proxy URL for Tier 3

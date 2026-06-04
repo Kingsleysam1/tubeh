@@ -20,3 +20,8 @@ backend/.venv/
 
 # Temp files
 /tmp/tubeheist_*
+
+# Cookie files — NEVER commit these
+cookies.txt
+*cookies*.txt
+youtube_cookies*
