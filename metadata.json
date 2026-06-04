@@ -1,0 +1,6 @@
+{
+  "name": "TUBEHEIST",
+  "description": "Minimalist digital stream heist and downloader inspired by Laurenti Web Design. Extract high-definition YouTube videos and crystal-clear audio containers with real-time progress updates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
