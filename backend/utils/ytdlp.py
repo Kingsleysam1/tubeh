@@ -77,6 +77,7 @@ def get_video_info(url: str) -> dict[str, Any]:
                 "--no-warnings",        # suppress warnings
                 "--no-playlist",        # single video only
                 "--no-check-certificates",
+                "--extractor-args", "youtube:player_client=android",
                 url,
             ],
             capture_output=True,
@@ -210,6 +211,7 @@ def download_video(
         "--no-playlist",
         "--no-check-certificates",
         "--no-overwrites",
+        "--extractor-args", "youtube:player_client=android",
         "-o", output_path,
         url,
     ]
