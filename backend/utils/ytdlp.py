@@ -14,6 +14,19 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# --- COOKIE SETUP ---
+COOKIE_FILE = "/tmp/youtube_cookies.txt"
+_cookies_content = os.environ.get("YOUTUBE_COOKIES")
+if _cookies_content:
+    try:
+        with open(COOKIE_FILE, "w") as f:
+            f.write(_cookies_content.strip())
+            # Ensure it ends with newline
+            f.write("\n")
+    except Exception as e:
+        logger.error(f"Failed to write cookies file: {e}")
+# --------------------
+
 TEMP_DIR = "/tmp"
 TEMP_PREFIX = "tubeheist_"
 
@@ -70,17 +83,21 @@ def get_video_info(url: str) -> dict[str, Any]:
         raise ValueError("Invalid YouTube URL format")
 
     try:
+        cmd = [
+            "yt-dlp",
+            "-4",                   # force IPv4
+            "-J",                   # dump JSON
+            "--no-warnings",        # suppress warnings
+            "--no-playlist",        # single video only
+            "--no-check-certificates",
+            "--extractor-args", "youtube:player_client=android",
+        ]
+        if _cookies_content:
+            cmd.extend(["--cookies", COOKIE_FILE])
+        cmd.append(url)
+
         result = subprocess.run(
-            [
-                "yt-dlp",
-                "-4",                   # force IPv4
-                "-J",                   # dump JSON
-                "--no-warnings",        # suppress warnings
-                "--no-playlist",        # single video only
-                "--no-check-certificates",
-                "--extractor-args", "youtube:player_client=android",
-                url,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=INFO_TIMEOUT,
@@ -214,9 +231,15 @@ def download_video(
         "--no-check-certificates",
         "--no-overwrites",
         "--extractor-args", "youtube:player_client=android",
+    ]
+    
+    if _cookies_content:
+        cmd.extend(["--cookies", COOKIE_FILE])
+        
+    cmd.extend([
         "-o", output_path,
         url,
-    ]
+    ])
 
     logger.info(f"Starting download: {' '.join(cmd)}")
 
