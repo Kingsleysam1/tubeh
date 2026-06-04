@@ -51,28 +51,40 @@ YOUTUBE_URL_PATTERN = re.compile(
     r"[a-zA-Z0-9_-]{11}"
 )
 
-# Patterns that indicate bot detection (advance to next strategy)
-BOT_DETECTION_PATTERNS = [
-    "Sign in to confirm",
+# Patterns that indicate we should move to the next strategy (bot blocks, client rejection, missing player response)
+NEXT_STRATEGY_PATTERNS = [
+    "sign in to confirm",
     "confirm you're not a bot",
     "bot",
-    "This helps protect our community",
+    "this helps protect our community",
     "consent",
     "accounts.google.com",
-    "HTTP Error 403",
-    "HTTP Error 429",
+    "http error 403",
+    "http error 429",
+    "failed to extract any player response",
+    "requested format is not available",
 ]
 
-# Patterns that indicate transient errors (retry same strategy)
+# Patterns that indicate transient network errors (retry same strategy)
 TRANSIENT_ERROR_PATTERNS = [
     "timed out",
-    "Connection reset",
-    "Connection refused",
-    "Network is unreachable",
-    "Temporary failure",
+    "connection reset",
+    "connection refused",
+    "network is unreachable",
+    "temporary failure",
     "urlopen error",
     "incomplete read",
-    "SSL",
+    "ssl",
+]
+
+# Patterns that indicate true fatal errors (video is dead/private)
+FATAL_PATTERNS = [
+    "video unavailable",
+    "is not available",
+    "age-restricted",
+    "private video",
+    "region-locked",
+    "copyright",
 ]
 
 # ── User-Agent Strings ────────────────────────────────────────────
@@ -267,15 +279,23 @@ def _classify_error(stderr: str) -> str:
     """
     stderr_lower = stderr.lower()
 
-    for pattern in BOT_DETECTION_PATTERNS:
-        if pattern.lower() in stderr_lower:
-            return "bot"
+    # True fatal errors (video deleted, private, region-locked)
+    for pattern in FATAL_PATTERNS:
+        if pattern in stderr_lower:
+            return "fatal"
 
+    # Known transient errors (network timeouts, SSL issues)
     for pattern in TRANSIENT_ERROR_PATTERNS:
-        if pattern.lower() in stderr_lower:
+        if pattern in stderr_lower:
             return "transient"
 
-    return "fatal"
+    # Known bot/client rejections
+    for pattern in NEXT_STRATEGY_PATTERNS:
+        if pattern in stderr_lower:
+            return "bot"
+
+    # Default to 'bot' so we try the next strategy instead of crashing
+    return "bot"
 
 
 def _parse_user_friendly_error(stderr: str) -> str:
