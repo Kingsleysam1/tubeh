@@ -19,6 +19,7 @@ RUN apt-get update && \
 # Copy backend requirements and install
 COPY backend/requirements.txt ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN pip install -U https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
 
 # Copy backend source code
 COPY backend/ ./backend/

@@ -73,6 +73,7 @@ def get_video_info(url: str) -> dict[str, Any]:
         result = subprocess.run(
             [
                 "yt-dlp",
+                "-4",                   # force IPv4
                 "-J",                   # dump JSON
                 "--no-warnings",        # suppress warnings
                 "--no-playlist",        # single video only
@@ -206,6 +207,7 @@ def download_video(
 
     cmd = [
         "yt-dlp",
+        "-4",
         *format_args,
         "--no-warnings",
         "--no-playlist",
