@@ -142,7 +142,8 @@ class CookieManager:
 
     def _decode_content(self, raw: str) -> Optional[str]:
         """
-        Decode cookie content — supports raw Netscape text or base64-encoded.
+        Decode cookie content — supports raw Netscape text, base64-encoded,
+        or raw HTTP Cookie headers.
         """
         # If it looks like a Netscape cookie file, use as-is
         if raw.startswith("# Netscape") or raw.startswith("# HTTP Cookie") or "\t" in raw.split("\n")[0]:
@@ -160,8 +161,26 @@ class CookieManager:
         if "\t" in raw:
             return f"# Netscape HTTP Cookie File\n{raw}"
 
+        # Is it a raw HTTP Cookie header string? (e.g., HSID=...; SSID=...)
+        if "=" in raw and "\t" not in raw and not raw.startswith("#"):
+            logger.info("Detected raw HTTP Cookie header, converting to Netscape format")
+            return self._convert_header_to_netscape(raw)
+
         logger.warning("YOUTUBE_COOKIES env var is not in recognized format")
         return None
+
+    def _convert_header_to_netscape(self, header: str) -> str:
+        """Converts a raw Cookie header string into Netscape format."""
+        lines = ["# Netscape HTTP Cookie File", "# This file was automatically generated from a raw Cookie header", ""]
+        parts = [p.strip() for p in header.split(";") if p.strip()]
+        for part in parts:
+            if "=" in part:
+                key, val = part.split("=", 1)
+                # domain, include_subdomains, path, secure, expiry, name, value
+                # Using 0 for expiry (session cookie) and TRUE for secure/subdomains as safe defaults for YouTube
+                lines.append(f".youtube.com\tTRUE\t/\tTRUE\t0\t{key}\t{val}")
+                lines.append(f".google.com\tTRUE\t/\tTRUE\t0\t{key}\t{val}")
+        return "\n".join(lines)
 
     def _validate_cookie_content(self, content: str) -> bool:
         """
