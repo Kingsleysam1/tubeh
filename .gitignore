@@ -6,3 +6,17 @@ coverage/
 *.log
 .env*
 !.env.example
+!backend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Temp files
+/tmp/tubeheist_*

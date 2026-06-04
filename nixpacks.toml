@@ -1,0 +1,15 @@
+# Railway deployment configuration for TubeHeist
+# Single service: Node.js builds frontend, Python runs backend
+
+[phases.setup]
+nixPkgs = ["python311", "ffmpeg-full", "nodejs_20"]
+
+[phases.install]
+cmds = [
+    "npm install",
+    "npm run build",
+    "pip install -r backend/requirements.txt"
+]
+
+[start]
+cmd = "cd backend && gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 300 --access-logfile - --error-logfile -"

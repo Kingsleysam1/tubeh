@@ -6,6 +6,13 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+// Flask backend URL — configurable via env, defaults to localhost:5000
+const FLASK_BACKEND_URL = process.env.FLASK_BACKEND_URL || 'http://localhost:5000';
+const API_TOKEN = process.env.API_TOKEN || '';
 
 // Helper to extract YouTube video ID from links
 function extractYouTubeId(url: string): string | null {
@@ -24,6 +31,43 @@ function isValidUrl(urlString: string): boolean {
   }
 }
 
+/**
+ * Proxy a request to the Flask backend.
+ * Forwards the request and streams the response back.
+ */
+async function proxyToFlask(
+  targetPath: string,
+  options: {
+    method: string;
+    body?: string;
+    headers?: Record<string, string>;
+  }
+): Promise<{ status: number; headers: Headers; body: any; text: string }> {
+  const url = `${FLASK_BACKEND_URL}${targetPath}`;
+  const fetchHeaders: Record<string, string> = {
+    ...(options.headers || {}),
+  };
+
+  // Add API token if configured
+  if (API_TOKEN) {
+    fetchHeaders['Authorization'] = `Bearer ${API_TOKEN}`;
+  }
+
+  const response = await fetch(url, {
+    method: options.method,
+    headers: fetchHeaders,
+    body: options.body,
+  });
+
+  const text = await response.text();
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: null,
+    text,
+  };
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -32,11 +76,17 @@ async function startServer() {
   app.use(express.json());
 
   // Health check route
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  app.get('/api/health', async (req, res) => {
+    try {
+      const result = await proxyToFlask('/api/health', { method: 'GET' });
+      res.status(result.status).send(result.text);
+    } catch {
+      // Fallback if Flask isn't running
+      res.json({ status: 'ok', timestamp: new Date().toISOString(), backend: 'express-only' });
+    }
   });
 
-  // Extract metadata via Official YouTube oEmbed API
+  // Proxy: Extract metadata via Flask backend (yt-dlp)
   app.get('/api/info', async (req, res) => {
     try {
       const { url } = req.query;
@@ -46,18 +96,36 @@ async function startServer() {
         return;
       }
 
-      const videoId = extractYouTubeId(url);
-      if (!videoId) {
-        res.status(400).json({ error: 'This is not a recognized YouTube video link' });
-        return;
-      }
+      const targetPath = `/api/info?url=${encodeURIComponent(url)}`;
+      const result = await proxyToFlask(targetPath, { method: 'GET' });
 
-      // Fetch from official unauthenticated oEmbed
-      const oEmbedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-      const response = await fetch(oEmbedUrl);
-      
-      if (!response.ok) {
-        // Fallback info with generated attributes if oEmbed fails
+      // Forward the Flask response
+      res.status(result.status).type('json').send(result.text);
+
+    } catch (error: any) {
+      console.error('Error proxying to Flask /api/info:', error?.message);
+
+      // Fallback: try oEmbed + thumbnail if Flask is down
+      const url = req.query.url as string;
+      const videoId = extractYouTubeId(url);
+      if (videoId) {
+        try {
+          const oEmbedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+          const response = await fetch(oEmbedUrl);
+          if (response.ok) {
+            const data = await response.json() as { title: string; author_name?: string };
+            res.json({
+              title: data.title,
+              author: data.author_name || 'YouTube Creator',
+              thumbnailUrl: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+              videoId,
+              originalUrl: url
+            });
+            return;
+          }
+        } catch {}
+
+        // Last-resort fallback
         res.json({
           title: `YouTube Video (${videoId})`,
           author: 'YouTube Creator',
@@ -65,24 +133,13 @@ async function startServer() {
           videoId,
           originalUrl: url
         });
-        return;
+      } else {
+        res.status(500).json({ error: 'Failed to retrieve YouTube video details' });
       }
-
-      const data = await response.json() as { title: string; author_name?: string };
-      res.json({
-        title: data.title,
-        author: data.author_name || 'YouTube Creator',
-        thumbnailUrl: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-        videoId,
-        originalUrl: url
-      });
-    } catch (error) {
-      console.error('Error fetching video info:', error);
-      res.status(500).json({ error: 'Failed to retrieve YouTube video details' });
     }
   });
 
-  // Proxy the download request to Cobalt API
+  // Proxy: Download request to Flask backend
   app.post('/api/download', async (req, res) => {
     try {
       const { url, videoQuality = '720', audioFormat = 'mp3', isAudioOnly = false } = req.body;
@@ -92,89 +149,79 @@ async function startServer() {
         return;
       }
 
-      // Determine cobalt API values
-      // Support BOTH v7/v8 style and v10 style parameters at same time to handle any container updates:
-      const payload: Record<string, unknown> = {
-        url: url,
-        filenamePattern: 'classic',
-        videoQuality: videoQuality,
-        audioFormat: audioFormat,
-        audioOnly: isAudioOnly,
-        downloadMode: isAudioOnly ? 'audio' : 'video'
-      };
+      const payload = JSON.stringify({
+        url,
+        videoQuality,
+        audioFormat,
+        isAudioOnly,
+      });
 
-      // We define list of potential Cobalt endpoints for high availability
-      const cobaltServers = [
-        'https://canine.tools',
-        'https://co.eepy.today',
-        'll.hyper.lol', // Some instances are hosted via this domain as fallback
-        'https://cobalt.moe',
-        'https://cobalt.pe',
-        'https://cobalt.shun.pw',
-        'https://co.wuk.sh',
-        'https://api.cobalt.tools',
-        'https://cobalt.api.ryboflaven.com',
-        'https://api.cobalt.run'
-      ];
+      const result = await proxyToFlask('/api/download', {
+        method: 'POST',
+        body: payload,
+        headers: { 'Content-Type': 'application/json' },
+      });
 
-      let lastError: string | null = null;
-      let success = false;
-      let responseData: any = null;
+      // Forward the Flask response
+      res.status(result.status).type('json').send(result.text);
 
-      for (const server of cobaltServers) {
-        try {
-          const formattedServer = server.startsWith('http') ? server : `https://${server}`;
-          console.log(`Attempting to request download from Cobalt server: ${formattedServer}`);
-          const cobaltResponse = await fetch(formattedServer, {
-            method: 'POST',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0'
-            },
-            body: JSON.stringify(payload)
-          });
+    } catch (error: any) {
+      console.error('API Download proxy error:', error?.message);
+      res.status(502).json({
+        status: 'error',
+        error: `Backend connection failed: ${error?.message || 'Flask backend is not reachable. Make sure it is running on ' + FLASK_BACKEND_URL}`,
+      });
+    }
+  });
 
-          if (!cobaltResponse.ok) {
-            const errBody = await cobaltResponse.text();
-            lastError = `Server ${formattedServer} responded with HTTP ${cobaltResponse.status}: ${errBody}`;
-            console.warn(lastError);
-            continue; // try next server
-          }
+  // Proxy: Serve downloaded files from Flask
+  app.get('/api/serve/:fileId', async (req, res) => {
+    try {
+      const fileId = req.params.fileId;
+      const targetUrl = `${FLASK_BACKEND_URL}/api/serve/${fileId}`;
 
-          const respText = await cobaltResponse.text();
-          try {
-            responseData = JSON.parse(respText);
-            success = true;
-            break;
-          } catch (jsonErr) {
-            lastError = `Server ${formattedServer} returned non-JSON content: ${respText.substring(0, 120)}`;
-            console.warn(lastError);
-            continue; // try next server
-          }
-        } catch (err: any) {
-          lastError = err?.message || String(err);
-          console.warn(`Failed endpoint ${server}:`, lastError);
-        }
+      const fetchHeaders: Record<string, string> = {};
+      if (API_TOKEN) {
+        fetchHeaders['Authorization'] = `Bearer ${API_TOKEN}`;
       }
 
-      if (!success) {
-        res.status(502).json({ 
-          error: `Failed to fetch download stream. Details: ${lastError || 'All fallback streams are currently overloaded.'}`
-        });
+      const response = await fetch(targetUrl, { headers: fetchHeaders });
+
+      if (!response.ok) {
+        const text = await response.text();
+        res.status(response.status).send(text);
         return;
       }
 
-      // Parse successfully retrieved response from Cobalt
-      // Typical responses:
-      // status: 'redirect' | 'tunnel' | 'picker' | 'error' | 'success'
-      // url: string (direct link)
-      // text: string (message/error)
-      res.json(responseData);
+      // Forward headers
+      const contentType = response.headers.get('content-type');
+      const contentDisposition = response.headers.get('content-disposition');
+      const contentLength = response.headers.get('content-length');
+
+      if (contentType) res.setHeader('Content-Type', contentType);
+      if (contentDisposition) res.setHeader('Content-Disposition', contentDisposition);
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+
+      // Stream the response body
+      if (response.body) {
+        const reader = response.body.getReader();
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(Buffer.from(value));
+          }
+          res.end();
+        };
+        await pump();
+      } else {
+        const buffer = await response.arrayBuffer();
+        res.send(Buffer.from(buffer));
+      }
 
     } catch (error: any) {
-      console.error('API Download processor error:', error);
-      res.status(500).json({ error: error?.message || 'Internal streaming proxy failure' });
+      console.error('File serve proxy error:', error?.message);
+      res.status(502).json({ error: 'Failed to retrieve file from backend' });
     }
   });
 
@@ -195,6 +242,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server starting on http://localhost:${PORT} under NODE_ENV=${process.env.NODE_ENV}`);
+    console.log(`Flask backend proxy target: ${FLASK_BACKEND_URL}`);
   });
 }
 
