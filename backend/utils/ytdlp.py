@@ -116,8 +116,14 @@ class ExtractionStrategy:
 
 def _build_strategies() -> list[ExtractionStrategy]:
     """
-    Build the ordered list of strategies.
+    Build the ordered list of extraction strategies.
+
+    Key insight: YouTube's bot detection triggers on the *webpage* fetch,
+    NOT on the player API call. By using player_skip=webpage, we bypass
+    the bot challenge entirely and go straight to the innertube API.
+
     Strategies with cookies come first (more likely to succeed).
+    Each strategy uses player_skip=webpage,configs to avoid the webpage.
     """
     strategies = []
 
@@ -130,6 +136,12 @@ def _build_strategies() -> list[ExtractionStrategy]:
                 name="ios_cookies",
                 player_client="ios",
                 user_agent=_UA_IOS_SAFARI,
+                use_cookies=True,
+            ),
+            ExtractionStrategy(
+                name="web_creator_cookies",
+                player_client="web_creator",
+                user_agent=_UA_DESKTOP_CHROME,
                 use_cookies=True,
             ),
             ExtractionStrategy(
@@ -146,7 +158,7 @@ def _build_strategies() -> list[ExtractionStrategy]:
             ),
         ])
 
-    # --- Without cookies ---
+    # --- Without cookies (player_skip=webpage is critical here) ---
     strategies.extend([
         ExtractionStrategy(
             name="ios_nocookies",
@@ -155,9 +167,21 @@ def _build_strategies() -> list[ExtractionStrategy]:
             use_cookies=False,
         ),
         ExtractionStrategy(
+            name="web_creator_nocookies",
+            player_client="web_creator",
+            user_agent=_UA_DESKTOP_CHROME,
+            use_cookies=False,
+        ),
+        ExtractionStrategy(
             name="android_nocookies",
             player_client="android",
             user_agent=_UA_ANDROID_CHROME,
+            use_cookies=False,
+        ),
+        ExtractionStrategy(
+            name="tv_embedded_nocookies",
+            player_client="tv_embedded",
+            user_agent=_UA_DESKTOP_CHROME,
             use_cookies=False,
         ),
         ExtractionStrategy(
@@ -178,6 +202,14 @@ def _build_base_cmd(strategy: ExtractionStrategy) -> list[str]:
     Build the base yt-dlp command with all common flags
     and the strategy-specific options.
     """
+    # player_skip=webpage is THE critical flag — it tells yt-dlp to skip
+    # fetching the video webpage (where YouTube does bot detection) and
+    # go directly to the innertube player API.
+    extractor_args = (
+        f"youtube:player_client={strategy.player_client};"
+        f"player_skip=webpage,configs"
+    )
+
     cmd = [
         "yt-dlp",
         "-4",                     # force IPv4 (avoids IPv6 issues on servers)
@@ -185,11 +217,13 @@ def _build_base_cmd(strategy: ExtractionStrategy) -> list[str]:
         "--no-playlist",
         "--no-check-certificates",
         "--geo-bypass",
-        "--socket-timeout", "15",
-        "--retries", "2",
-        "--fragment-retries", "5",
-        "--extractor-args", f"youtube:player_client={strategy.player_client}",
+        "--socket-timeout", "20",
+        "--retries", "3",
+        "--fragment-retries", "10",
+        "--extractor-args", extractor_args,
         "--user-agent", strategy.user_agent,
+        "--referer", "https://www.youtube.com/",
+        "--add-headers", "Accept-Language:en-US,en;q=0.9",
     ]
 
     # Cookies
